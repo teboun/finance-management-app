@@ -2,12 +2,18 @@
 
 Lancer: python -m salary_app.app
 """
+import sys
+import tempfile
 import tkinter as tk
+import webbrowser
 from datetime import date
-from tkinter import messagebox, ttk
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
 
-from . import calc
+from . import __version__, calc
 from .db import DB
+from .report import payslip_html
+from .xlsx import write_xlsx
 
 LANGS = ("en", "fr")
 
@@ -18,6 +24,7 @@ TEXT = {
     "tab_emp": ("Employees", "Employés"),
     "tab_abs": ("Absences", "Absences"),
     "tab_emp_purch": ("Employee purchases", "Achats employés"),
+    "tab_bonus": ("Bonuses & overtime", "Primes & heures sup"),
     "tab_calc": ("Salary calculation", "Calcul salaire"),
     "tab_hist": ("History", "Historique"),
     "tab_business": ("Business purchases", "Achats entreprise"),
@@ -40,6 +47,7 @@ TEXT = {
     "salary": ("Salary", "Salaire"),
     "type": ("Type", "Type"),
     "rate": ("Daily rate", "Taux jour"),
+    "hour_rate": ("Hourly rate", "Taux horaire"),
     "active": ("Active", "Actif"),
     "yes": ("Yes", "Oui"),
     "no": ("No", "Non"),
@@ -54,6 +62,11 @@ TEXT = {
     "amount": ("Amount", "Montant"),
     "item_advance": ("Item / advance", "Article / avance"),
     "description": ("Description", "Description"),
+    "bonus": ("Bonus", "Prime"),
+    "overtime": ("Overtime", "Heures sup"),
+    "bonuses": ("Bonuses", "Primes"),
+    "hours": ("Hours", "Heures"),
+    "amount_or_hours": ("DA or hours", "DA ou heures"),
     "period": ("Period", "Période"),
     "date_in_period": ("Date in period", "Date dans la période"),
     "gross": ("Gross", "Brut"),
@@ -70,6 +83,10 @@ TEXT = {
     "payment": ("Payment", "Paiement"),
     "confirm_payments": ("Save {} payment(s)?", "Enregistrer {} paiement(s) ?"),
     "payment_saved": ("Payment saved", "Paiement enregistré"),
+    "payslip": ("Payslip", "Fiche de paie"),
+    "print": ("Print", "Imprimer"),
+    "sign_employer": ("Employer signature", "Signature de l'employeur"),
+    "sign_employee": ("Employee signature", "Signature de l'employé"),
     "month_filter": ("Month (YYYY-MM, empty = all)", "Mois (AAAA-MM, vide = tout)"),
     "show": ("Show", "Afficher"),
     "abs_short": ("Absences", "Abs."),
@@ -78,6 +95,14 @@ TEXT = {
     "total_paid": ("Total paid", "Total payé"),
     "supplier": ("Supplier", "Fournisseur"),
     "total_purchases": ("Total purchases", "Total achats"),
+    "export": ("Export Excel", "Exporter Excel"),
+    "no_data": ("Nothing to export", "Rien à exporter"),
+    "saved_to": ("Saved to:\n{}", "Enregistré dans :\n{}"),
+    "backup": ("Backup", "Sauvegarder"),
+    "restore": ("Restore", "Restaurer"),
+    "restore_confirm": ("Replace ALL current data with this backup?",
+                        "Remplacer TOUTES les données actuelles par cette sauvegarde ?"),
+    "restore_done": ("Data restored", "Données restaurées"),
 }
 
 
@@ -102,6 +127,8 @@ def make_tree(parent, columns, height=12):
     for cid, title, width in columns:
         tree.heading(cid, text=title)
         tree.column(cid, width=width, anchor="center")
+    tree.tag_configure("neg", foreground="#c00000")
+    tree.raw_rows = []
     sb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
     tree.configure(yscrollcommand=sb.set)
     tree.pack(side="left", fill="both", expand=True)
@@ -110,10 +137,21 @@ def make_tree(parent, columns, height=12):
     return tree
 
 
-def fill_tree(tree, rows):
+def money(*cols):
+    """Colonnes à afficher en DA."""
+    return {c: calc.fmt_da for c in cols}
+
+
+def fill_tree(tree, rows, fmt=None, neg_col=None):
+    """rows = [(iid, valeurs brutes)]; fmt = {colonne: fonction d'affichage}.
+    Les valeurs brutes sont gardées pour l'export Excel."""
+    fmt = fmt or {}
     tree.delete(*tree.get_children())
+    tree.raw_rows = [list(values) for _, values in rows]
     for iid, values in rows:
-        tree.insert("", "end", iid=str(iid), values=values)
+        shown = [fmt[i](v) if i in fmt else v for i, v in enumerate(values)]
+        tags = ("neg",) if neg_col is not None and values[neg_col] < 0 else ()
+        tree.insert("", "end", iid=str(iid), values=shown, tags=tags)
 
 
 class App(tk.Tk):
@@ -121,7 +159,7 @@ class App(tk.Tk):
         super().__init__()
         self.db = db
         self.lang = db.get_setting("lang", "en")
-        self.geometry("1100x650")
+        self.geometry("1150x650")
         self.root_frame = None
         self.build()
 
@@ -143,11 +181,15 @@ class App(tk.Tk):
         """(Re)construit toute l'interface dans la langue courante."""
         if self.root_frame:
             self.root_frame.destroy()
-        self.title(self.t("title"))
+        self.title(f"{self.t('title')} v{__version__}")
         self.emp_combos = []
         self.root_frame = ttk.Frame(self)
         self.root_frame.pack(fill="both", expand=True)
-        ttk.Button(self.root_frame, text=self.t("switch"), command=self.switch_lang).pack(anchor="e", padx=8, pady=4)
+        top = ttk.Frame(self.root_frame)
+        top.pack(fill="x", padx=8, pady=4)
+        ttk.Button(top, text=self.t("switch"), command=self.switch_lang).pack(side="right", padx=2)
+        ttk.Button(top, text=self.t("restore"), command=self.safe(self.restore)).pack(side="right", padx=2)
+        ttk.Button(top, text=self.t("backup"), command=self.safe(self.backup)).pack(side="right", padx=2)
 
         nb = ttk.Notebook(self.root_frame)
         nb.pack(fill="both", expand=True)
@@ -155,6 +197,7 @@ class App(tk.Tk):
             ("tab_emp", self.build_employees),
             ("tab_abs", self.build_absences),
             ("tab_emp_purch", self.build_emp_purchases),
+            ("tab_bonus", self.build_bonuses),
             ("tab_calc", self.build_calc),
             ("tab_hist", self.build_history),
             ("tab_business", self.build_business),
@@ -198,6 +241,9 @@ class App(tk.Tk):
     def button(self, box, key, cmd, col):
         ttk.Button(box, text=self.t(key), command=cmd).grid(row=1, column=col, padx=4)
 
+    def export_button(self, box, tree, col, name):
+        self.button(box, "export", self.safe(lambda: self.export_tree(tree, name)), col)
+
     def refresh_emp_combos(self):
         names = [f"{e['id']} - {e['name']}" for e in self.db.employees(only_active=True)]
         for combo, with_all in self.emp_combos:
@@ -214,7 +260,7 @@ class App(tk.Tk):
         def run():
             try:
                 fn()
-            except ValueError as err:
+            except (ValueError, OSError) as err:
                 msg = str(err)
                 messagebox.showerror(self.t("error"), self.t(msg) if msg in TEXT else msg)
         return run
@@ -234,6 +280,33 @@ class App(tk.Tk):
             raise ValueError("choose_emp")
         return emp_id
 
+    # ---------- Export / sauvegarde ----------
+    def export_tree(self, tree, name):
+        if not tree.raw_rows:
+            raise ValueError("no_data")
+        path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel", "*.xlsx")],
+                                            initialfile=f"{name}_{date.today().isoformat()}.xlsx")
+        if not path:
+            return
+        headers = [tree.heading(c)["text"] for c in tree["columns"]]
+        write_xlsx(path, headers, tree.raw_rows, sheet_name=name)
+        messagebox.showinfo("OK", self.t("saved_to").format(path))
+
+    def backup(self):
+        path = filedialog.asksaveasfilename(defaultextension=".db", filetypes=[("Backup", "*.db")],
+                                            initialfile=f"salaires_backup_{date.today().isoformat()}.db")
+        if path:
+            self.db.backup_to(path)
+            messagebox.showinfo("OK", self.t("saved_to").format(path))
+
+    def restore(self):
+        path = filedialog.askopenfilename(filetypes=[("Backup", "*.db")])
+        if path and messagebox.askyesno(self.t("restore"), self.t("restore_confirm")):
+            self.db.restore_from(path)
+            self.lang = self.db.get_setting("lang", self.lang)
+            self.build()
+            messagebox.showinfo("OK", self.t("restore_done"))
+
     # ---------- Employés ----------
     def build_employees(self, tab):
         v = self.form(tab, [
@@ -244,18 +317,19 @@ class App(tk.Tk):
         v["active"] = tk.IntVar(value=1)
         ttk.Checkbutton(v["_box"], text=self.t("active"), variable=v["active"]).grid(row=1, column=3, padx=4)
         tree = make_tree(tab, [
-            ("name", self.t("name"), 220), ("type", self.t("type"), 150),
-            ("base", self.t("salary"), 150), ("rate", self.t("rate"), 150),
-            ("active", self.t("active"), 80),
+            ("name", self.t("name"), 200), ("type", self.t("type"), 130),
+            ("base", self.t("salary"), 140), ("rate", self.t("rate"), 130),
+            ("hrate", self.t("hour_rate"), 130), ("active", self.t("active"), 70),
         ])
 
         def refresh():
             rows = []
             for e in self.db.employees():
-                rows.append((e["id"], (e["name"], self.pay_label(e["pay_type"]), calc.fmt_da(e["base_amount"]),
-                                       calc.fmt_da(calc.daily_rate(e["pay_type"], e["base_amount"])),
+                p, b = e["pay_type"], e["base_amount"]
+                rows.append((e["id"], (e["name"], self.pay_label(p), b, round(calc.daily_rate(p, b), 2),
+                                       round(calc.hourly_rate(p, b), 2),
                                        self.t("yes") if e["active"] else self.t("no"))))
-            fill_tree(tree, rows)
+            fill_tree(tree, rows, money(2, 3, 4))
             self.refresh_emp_combos()
 
         def values():
@@ -287,6 +361,7 @@ class App(tk.Tk):
         tree.bind("<<TreeviewSelect>>", on_select)
         self.button(v["_box"], "add", self.safe(add), 4)
         self.button(v["_box"], "edit", self.safe(update), 5)
+        self.export_button(v["_box"], tree, 6, self.t("tab_emp"))
         refresh()
 
     # ---------- Absences ----------
@@ -314,6 +389,7 @@ class App(tk.Tk):
 
         self.button(v["_box"], "add", self.safe(add), 4)
         self.button(v["_box"], "delete", lambda: self.delete_selected(tree, "absences", refresh), 5)
+        self.export_button(v["_box"], tree, 6, self.t("tab_abs"))
         refresh()
 
     # ---------- Achats employés ----------
@@ -330,8 +406,8 @@ class App(tk.Tk):
         ])
 
         def refresh():
-            fill_tree(tree, [(p["id"], (p["date"], p["name"], calc.fmt_da(p["amount"]), p["description"]))
-                             for p in self.db.employee_purchases()])
+            fill_tree(tree, [(p["id"], (p["date"], p["name"], p["amount"], p["description"]))
+                             for p in self.db.employee_purchases()], money(2))
 
         def add():
             emp_id = self.require_emp(v["emp"])
@@ -341,6 +417,43 @@ class App(tk.Tk):
 
         self.button(v["_box"], "add", self.safe(add), 4)
         self.button(v["_box"], "delete", lambda: self.delete_selected(tree, "employee_purchases", refresh), 5)
+        self.export_button(v["_box"], tree, 6, self.t("tab_emp_purch"))
+        refresh()
+
+    # ---------- Primes & heures sup ----------
+    def build_bonuses(self, tab):
+        v = self.form(tab, [
+            ("emp", "employee", "emp"),
+            ("date", "date", 12),
+            ("kind", "type", (self.t("bonus"), self.t("overtime"))),
+            ("value", "amount_or_hours", 12),
+            ("note", "note", 14),
+        ])
+        tree = make_tree(tab, [
+            ("date", self.t("date"), 110), ("name", self.t("employee"), 200),
+            ("kind", self.t("type"), 120), ("hours", self.t("hours"), 80),
+            ("amount", self.t("amount"), 140), ("note", self.t("note"), 250),
+        ])
+
+        def refresh():
+            fill_tree(tree, [(b["id"], (b["date"], b["name"], self.t(b["kind"]), b["hours"] or "",
+                                        b["amount"], b["note"])) for b in self.db.bonuses()], money(4))
+
+        def add():
+            emp_id = self.require_emp(v["emp"])
+            day = parse_date(v["date"].get()).isoformat()
+            value = parse_amount(v["value"].get())
+            if v["kind"].get() == self.t("overtime"):
+                emp = self.db.employee(emp_id)
+                amount = calc.overtime_amount(emp["pay_type"], emp["base_amount"], value)
+                self.db.add_bonus(emp_id, day, "overtime", amount, hours=value, note=v["note"].get())
+            else:
+                self.db.add_bonus(emp_id, day, "bonus", value, note=v["note"].get())
+            refresh()
+
+        self.button(v["_box"], "add", self.safe(add), 5)
+        self.button(v["_box"], "delete", lambda: self.delete_selected(tree, "bonuses", refresh), 6)
+        self.export_button(v["_box"], tree, 7, self.t("tab_bonus"))
         refresh()
 
     # ---------- Calcul ----------
@@ -353,9 +466,10 @@ class App(tk.Tk):
         period_lbl = ttk.Label(tab, text="", font=("TkDefaultFont", 10, "bold"))
         period_lbl.pack(anchor="w", padx=12)
         tree = make_tree(tab, [
-            ("name", self.t("employee"), 170), ("gross", self.t("gross"), 130),
-            ("abs", self.t("abs_days"), 100), ("absded", self.t("abs_ded"), 140),
-            ("achats", self.t("purchases"), 130), ("net", self.t("net_pay"), 160),
+            ("name", self.t("employee"), 160), ("gross", self.t("gross"), 120),
+            ("bonus", self.t("bonuses"), 110), ("abs", self.t("abs_days"), 90),
+            ("absded", self.t("abs_ded"), 130), ("achats", self.t("purchases"), 120),
+            ("net", self.t("net_pay"), 160),
         ])
         total_lbl = ttk.Label(tab, text="", font=("TkDefaultFont", 11, "bold"))
         total_lbl.pack(anchor="e", padx=12, pady=6)
@@ -364,6 +478,9 @@ class App(tk.Tk):
         def period():
             d = parse_date(v["date"].get())
             return calc.month_period(d) if v["period"].get() == self.t("month") else calc.week_period(d)
+
+        def net_fmt(n):
+            return calc.fmt_da(n) + (f" ({self.t('debt')})" if n < 0 else "")
 
         def compute():
             start, end = period()
@@ -375,31 +492,48 @@ class App(tk.Tk):
             for emp in emps:
                 slip = calc.compute_payslip(emp["pay_type"], emp["base_amount"],
                                             self.db.absence_days(emp["id"], s, e),
-                                            self.db.purchases_total(emp["id"], s, e), start, end)
-                results[emp["id"]] = (s, e, slip)
+                                            self.db.purchases_total(emp["id"], s, e), start, end,
+                                            bonuses_total=self.db.bonuses_total(emp["id"], s, e))
+                results[emp["id"]] = (s, e, slip, emp)
                 total += slip["net"]
-                net = calc.fmt_da(slip["net"]) + (f" ({self.t('debt')})" if slip["net"] < 0 else "")
-                rows.append((emp["id"], (emp["name"], calc.fmt_da(slip["gross"]), slip["absence_days"],
-                                         calc.fmt_da(slip["absence_deduction"]),
-                                         calc.fmt_da(slip["purchases_deduction"]), net)))
-            fill_tree(tree, rows)
+                rows.append((emp["id"], (emp["name"], slip["gross"], slip["bonuses"], slip["absence_days"],
+                                         slip["absence_deduction"], slip["purchases_deduction"], slip["net"])))
+            fmt = money(1, 2, 4, 5)
+            fmt[6] = net_fmt
+            fill_tree(tree, rows, fmt, neg_col=6)
             period_lbl.config(text=self.t("from_to").format(s, e))
             total_lbl.config(text=f"{self.t('total_net')}: {calc.fmt_da(total)}")
 
-        def save():
+        def selected_ids():
             ids = [int(i) for i in tree.selection()] or list(results)
             if not ids:
                 raise ValueError("calc_first")
+            return ids
+
+        def save():
+            ids = selected_ids()
             if not messagebox.askyesno(self.t("payment"), self.t("confirm_payments").format(len(ids))):
                 return
             today = date.today().isoformat()
             for emp_id in ids:
-                s, e, slip = results[emp_id]
+                s, e, slip, _ = results[emp_id]
                 self.db.add_payment(emp_id, s, e, slip, today)
             messagebox.showinfo("OK", self.t("payment_saved"))
 
+        def payslips():
+            folder = Path(tempfile.gettempdir()) / "fiches_de_paie"
+            folder.mkdir(exist_ok=True)
+            for emp_id in selected_ids():
+                s, e, slip, emp = results[emp_id]
+                html = payslip_html(self.t, emp["name"], self.pay_label(emp["pay_type"]), s, e, slip)
+                path = folder / f"{self.t('payslip')}_{emp['name']}_{s}.html".replace(" ", "_")
+                path.write_text(html, encoding="utf-8")
+                webbrowser.open(path.as_uri())
+
         self.button(v["_box"], "calc", self.safe(compute), 3)
         self.button(v["_box"], "save_payment", self.safe(save), 4)
+        self.button(v["_box"], "payslip", self.safe(payslips), 5)
+        self.export_button(v["_box"], tree, 6, self.t("tab_calc"))
 
     # ---------- Historique ----------
     def build_history(self, tab):
@@ -408,24 +542,25 @@ class App(tk.Tk):
             ("month", "month_filter", 12),
         ])
         tree = make_tree(tab, [
-            ("period", self.t("period"), 190), ("name", self.t("employee"), 160),
-            ("gross", self.t("gross"), 120), ("absded", self.t("abs_short"), 110),
-            ("achats", self.t("purchases"), 110), ("net", self.t("net"), 120),
-            ("paid", self.t("paid_on"), 110),
+            ("period", self.t("period"), 190), ("name", self.t("employee"), 150),
+            ("gross", self.t("gross"), 115), ("bonus", self.t("bonuses"), 105),
+            ("absded", self.t("abs_short"), 105), ("achats", self.t("purchases"), 105),
+            ("net", self.t("net"), 115), ("paid", self.t("paid_on"), 100),
         ])
         total_lbl = ttk.Label(tab, text="", font=("TkDefaultFont", 11, "bold"))
         total_lbl.pack(anchor="e", padx=12, pady=6)
 
         def refresh():
             pays = self.db.payments(self.emp_id(v["emp"]), v["month"].get().strip() or None)
-            fill_tree(tree, [(p["id"], (f"{p['period_start']} → {p['period_end']}", p["name"],
-                                        calc.fmt_da(p["gross"]), calc.fmt_da(p["absence_deduction"]),
-                                        calc.fmt_da(p["purchases_deduction"]), calc.fmt_da(p["net"]),
-                                        p["paid_on"])) for p in pays])
+            fill_tree(tree, [(p["id"], (f"{p['period_start']} → {p['period_end']}", p["name"], p["gross"],
+                                        p["bonuses"], p["absence_deduction"], p["purchases_deduction"],
+                                        p["net"], p["paid_on"])) for p in pays],
+                      money(2, 3, 4, 5, 6), neg_col=6)
             total_lbl.config(text=f"{self.t('total_paid')}: {calc.fmt_da(sum(p['net'] for p in pays))}")
 
         self.button(v["_box"], "show", self.safe(refresh), 2)
         self.button(v["_box"], "delete", lambda: self.delete_selected(tree, "payments", refresh), 3)
+        self.export_button(v["_box"], tree, 4, self.t("tab_hist"))
         refresh()
 
     # ---------- Achats entreprise ----------
@@ -446,8 +581,8 @@ class App(tk.Tk):
 
         def refresh():
             rows = self.db.business_purchases(f["month"].get().strip() or None)
-            fill_tree(tree, [(p["id"], (p["date"], calc.fmt_da(p["amount"]), p["description"], p["supplier"]))
-                             for p in rows])
+            fill_tree(tree, [(p["id"], (p["date"], p["amount"], p["description"], p["supplier"]))
+                             for p in rows], money(1))
             total_lbl.config(text=f"{self.t('total_purchases')}: {calc.fmt_da(sum(p['amount'] for p in rows))}")
 
         def add():
@@ -458,10 +593,17 @@ class App(tk.Tk):
         self.button(v["_box"], "add", self.safe(add), 4)
         self.button(f["_box"], "show", self.safe(refresh), 1)
         self.button(f["_box"], "delete", lambda: self.delete_selected(tree, "business_purchases", refresh), 2)
+        self.export_button(f["_box"], tree, 3, self.t("tab_business"))
         refresh()
 
 
 def main():
+    if sys.platform == "win32":
+        try:  # texte net sur les écrans haute résolution
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except (AttributeError, OSError):
+            pass
     App(DB()).mainloop()
 
 

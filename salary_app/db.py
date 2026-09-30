@@ -48,6 +48,15 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+CREATE TABLE IF NOT EXISTS bonuses (
+    id INTEGER PRIMARY KEY,
+    employee_id INTEGER NOT NULL REFERENCES employees(id),
+    date TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('bonus','overtime')),
+    hours REAL NOT NULL DEFAULT 0,
+    amount REAL NOT NULL,
+    note TEXT DEFAULT ''
+);
 """
 
 
@@ -55,7 +64,27 @@ class DB:
     def __init__(self, path=DB_PATH):
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
+        self._migrate()
+
+    def _migrate(self):
+        """Crée les tables manquantes et met à jour les anciennes bases."""
         self.conn.executescript(SCHEMA)
+        cols = [r["name"] for r in self.conn.execute("PRAGMA table_info(payments)")]
+        if "bonuses" not in cols:
+            self._exec("ALTER TABLE payments ADD COLUMN bonuses REAL NOT NULL DEFAULT 0")
+
+    # Sauvegarde / restauration
+    def backup_to(self, path):
+        dest = sqlite3.connect(path)
+        with dest:
+            self.conn.backup(dest)
+        dest.close()
+
+    def restore_from(self, path):
+        src = sqlite3.connect(path)
+        src.backup(self.conn)
+        src.close()
+        self._migrate()
 
     def _exec(self, sql, params=()):
         cur = self.conn.execute(sql, params)
@@ -133,11 +162,27 @@ class DB:
                              (month,))
         return self._all("SELECT * FROM business_purchases ORDER BY date DESC")
 
+    # Primes et heures supplémentaires
+    def add_bonus(self, emp_id, day, kind, amount, hours=0, note=""):
+        self._exec("INSERT INTO bonuses (employee_id, date, kind, hours, amount, note) VALUES (?,?,?,?,?,?)",
+                   (emp_id, day, kind, hours, amount, note))
+
+    def bonuses(self, emp_id=None):
+        base = "SELECT b.*, e.name FROM bonuses b JOIN employees e ON e.id=b.employee_id "
+        if emp_id:
+            return self._all(base + "WHERE employee_id=? ORDER BY date DESC", (emp_id,))
+        return self._all(base + "ORDER BY date DESC")
+
+    def bonuses_total(self, emp_id, start, end):
+        row = self.conn.execute("SELECT COALESCE(SUM(amount),0) FROM bonuses WHERE employee_id=? "
+                                "AND date BETWEEN ? AND ?", (emp_id, start, end)).fetchone()
+        return row[0]
+
     # Paiements
     def add_payment(self, emp_id, start, end, slip, paid_on):
-        self._exec("INSERT INTO payments (employee_id, period_start, period_end, gross, absence_deduction, "
-                   "purchases_deduction, net, paid_on) VALUES (?,?,?,?,?,?,?,?)",
-                   (emp_id, start, end, slip["gross"], slip["absence_deduction"],
+        self._exec("INSERT INTO payments (employee_id, period_start, period_end, gross, bonuses, "
+                   "absence_deduction, purchases_deduction, net, paid_on) VALUES (?,?,?,?,?,?,?,?,?)",
+                   (emp_id, start, end, slip["gross"], slip.get("bonuses", 0), slip["absence_deduction"],
                     slip["purchases_deduction"], slip["net"], paid_on))
 
     def payments(self, emp_id=None, month=None):
@@ -153,6 +198,6 @@ class DB:
 
     # Suppression générique
     def delete(self, table, row_id):
-        if table not in ("absences", "employee_purchases", "business_purchases", "payments"):
+        if table not in ("absences", "employee_purchases", "business_purchases", "payments", "bonuses"):
             raise ValueError(table)
         self._exec(f"DELETE FROM {table} WHERE id=?", (row_id,))
