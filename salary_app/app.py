@@ -60,7 +60,7 @@ class App(tk.Tk):
         super().__init__()
         self.db = db
         self.title("Gestion des salaires / تسيير الرواتب")
-        self.geometry("980x620")
+        self.geometry("1250x650")
         self.emp_combos = []
 
         nb = ttk.Notebook(self)
