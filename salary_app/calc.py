@@ -1,4 +1,4 @@
-"""Calculs de salaire / حساب الرواتب (sans interface, testable)."""
+"""Calculs de salaire (sans interface, testable)."""
 import calendar
 from datetime import date, timedelta
 

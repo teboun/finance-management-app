@@ -58,6 +58,12 @@ class DBTest(unittest.TestCase):
         self.assertEqual(db.absence_days(emp, "2026-09-01", "2026-09-30"), 1)
         self.assertEqual(db.purchases_total(emp, "2026-09-01", "2026-09-30"), 1200)
 
+    def test_settings(self):
+        db = DB(":memory:")
+        self.assertEqual(db.get_setting("lang", "en"), "en")
+        db.set_setting("lang", "fr")
+        self.assertEqual(db.get_setting("lang", "en"), "fr")
+
 
 if __name__ == "__main__":
     unittest.main()

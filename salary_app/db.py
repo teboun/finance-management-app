@@ -1,4 +1,4 @@
-"""Base de données SQLite / قاعدة البيانات."""
+"""Base de données SQLite."""
 import os
 import sqlite3
 
@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS payments (
     net REAL NOT NULL,
     paid_on TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -60,6 +64,14 @@ class DB:
 
     def _all(self, sql, params=()):
         return self.conn.execute(sql, params).fetchall()
+
+    # Paramètres (langue, ...)
+    def get_setting(self, key, default=None):
+        row = self.conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row[0] if row else default
+
+    def set_setting(self, key, value):
+        self._exec("INSERT OR REPLACE INTO settings (key, value) VALUES (?,?)", (key, value))
 
     # Employés
     def add_employee(self, name, pay_type, base):
