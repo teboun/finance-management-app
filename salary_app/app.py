@@ -10,7 +10,8 @@ from datetime import date
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from . import __version__, calc
+from . import __version__, calc, theme
+from .datepicker import DatePicker
 from .db import DB
 from .report import payslip_html
 from .xlsx import write_xlsx
@@ -103,7 +104,19 @@ TEXT = {
     "restore_confirm": ("Replace ALL current data with this backup?",
                         "Remplacer TOUTES les données actuelles par cette sauvegarde ?"),
     "restore_done": ("Data restored", "Données restaurées"),
+    "settings": ("Settings", "Paramètres"),
+    "company": ("Company", "Entreprise"),
+    "company_name": ("Company name", "Nom de l'entreprise"),
+    "company_address": ("Address", "Adresse"),
+    "company_phone": ("Phone", "Téléphone"),
+    "company_nif": ("Tax ID (NIF)", "NIF"),
+    "company_hint": ("Shown on payslips.", "Affiché sur les fiches de paie."),
+    "save": ("Save", "Enregistrer"),
+    "cancel": ("Cancel", "Annuler"),
+    "subtitle": ("Salaries, absences, purchases and bonuses", "Salaires, absences, achats et primes"),
 }
+
+COMPANY_KEYS = ("company_name", "company_address", "company_phone", "company_nif")
 
 
 def parse_date(text):
@@ -127,7 +140,7 @@ def make_tree(parent, columns, height=12):
     for cid, title, width in columns:
         tree.heading(cid, text=title)
         tree.column(cid, width=width, anchor="center")
-    tree.tag_configure("neg", foreground="#c00000")
+    theme.style_tree(tree)
     tree.raw_rows = []
     sb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
     tree.configure(yscrollcommand=sb.set)
@@ -148,9 +161,11 @@ def fill_tree(tree, rows, fmt=None, neg_col=None):
     fmt = fmt or {}
     tree.delete(*tree.get_children())
     tree.raw_rows = [list(values) for _, values in rows]
-    for iid, values in rows:
+    for n, (iid, values) in enumerate(rows):
         shown = [fmt[i](v) if i in fmt else v for i, v in enumerate(values)]
-        tags = ("neg",) if neg_col is not None and values[neg_col] < 0 else ()
+        tags = ("odd",) if n % 2 else ()
+        if neg_col is not None and values[neg_col] < 0:
+            tags += ("neg",)
         tree.insert("", "end", iid=str(iid), values=shown, tags=tags)
 
 
@@ -159,7 +174,9 @@ class App(tk.Tk):
         super().__init__()
         self.db = db
         self.lang = db.get_setting("lang", "en")
-        self.geometry("1150x650")
+        theme.apply(self)
+        self.geometry("1200x700")
+        self.minsize(1000, 560)
         self.root_frame = None
         self.build()
 
@@ -185,14 +202,21 @@ class App(tk.Tk):
         self.emp_combos = []
         self.root_frame = ttk.Frame(self)
         self.root_frame.pack(fill="both", expand=True)
-        top = ttk.Frame(self.root_frame)
-        top.pack(fill="x", padx=8, pady=4)
-        ttk.Button(top, text=self.t("switch"), command=self.switch_lang).pack(side="right", padx=2)
-        ttk.Button(top, text=self.t("restore"), command=self.safe(self.restore)).pack(side="right", padx=2)
-        ttk.Button(top, text=self.t("backup"), command=self.safe(self.backup)).pack(side="right", padx=2)
+        top = ttk.Frame(self.root_frame, style="Header.TFrame", padding=(16, 10))
+        top.pack(fill="x")
+        company = self.db.get_setting("company_name", "")
+        titles = ttk.Frame(top, style="Header.TFrame")
+        titles.pack(side="left")
+        ttk.Label(titles, text=company or self.t("title"), style="Header.TLabel").pack(anchor="w")
+        sub = f"{self.t('title')} v{__version__}" if company else self.t("subtitle")
+        ttk.Label(titles, text=sub, style="HeaderSub.TLabel").pack(anchor="w")
+        for key, cmd in (("switch", self.switch_lang), ("restore", self.safe(self.restore)),
+                         ("backup", self.safe(self.backup)), ("settings", self.open_settings)):
+            ttk.Button(top, text=theme.button_text(key, self.t(key)), command=cmd,
+                       style="Header.TButton").pack(side="right", padx=3)
 
         nb = ttk.Notebook(self.root_frame)
-        nb.pack(fill="both", expand=True)
+        nb.pack(fill="both", expand=True, pady=(6, 0))
         for key, builder in (
             ("tab_emp", self.build_employees),
             ("tab_abs", self.build_absences),
@@ -227,6 +251,12 @@ class App(tk.Tk):
             elif isinstance(kind, tuple):
                 w = ttk.Combobox(box, textvariable=var, values=kind, state="readonly", width=16)
                 var.set(kind[0])
+            elif key == "date":
+                w = ttk.Frame(box)
+                ttk.Entry(w, textvariable=var, width=kind or 12).pack(side="left")
+                pick = ttk.Button(w, text="▦", width=3, style="Icon.TButton")
+                pick.configure(command=lambda b=pick, v=var: DatePicker(b, v, self.lang, calc.WEEK_START))
+                pick.pack(side="left", padx=(2, 0))
             else:
                 w = ttk.Entry(box, textvariable=var, width=kind or 16)
             if key == "date":
@@ -239,7 +269,13 @@ class App(tk.Tk):
         return vars_
 
     def button(self, box, key, cmd, col):
-        ttk.Button(box, text=self.t(key), command=cmd).grid(row=1, column=col, padx=4)
+        """Ajoute un bouton dans la barre d'actions sous les champs (col = ordre d'appel)."""
+        bar = getattr(box, "actions", None)
+        if bar is None:
+            bar = box.actions = ttk.Frame(box)
+            bar.grid(row=2, column=0, columnspan=20, sticky="w", pady=(8, 0))
+        ttk.Button(bar, text=theme.button_text(key, self.t(key)), command=cmd,
+                   style=theme.button_style(key)).pack(side="left", padx=4)
 
     def export_button(self, box, tree, col, name):
         self.button(box, "export", self.safe(lambda: self.export_tree(tree, name)), col)
@@ -306,6 +342,42 @@ class App(tk.Tk):
             self.lang = self.db.get_setting("lang", self.lang)
             self.build()
             messagebox.showinfo("OK", self.t("restore_done"))
+
+    # ---------- Paramètres entreprise ----------
+    def company(self):
+        return {k: self.db.get_setting(k, "") for k in COMPANY_KEYS}
+
+    def open_settings(self):
+        win = tk.Toplevel(self)
+        win.title(self.t("settings"))
+        win.configure(background=theme.BG)
+        win.transient(self)
+        win.resizable(False, False)
+        frame = ttk.Frame(win, padding=20)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text=self.t("company"), style="Period.TLabel").grid(row=0, column=0, columnspan=2,
+                                                                              sticky="w")
+        ttk.Label(frame, text=self.t("company_hint"), style="Muted.TLabel").grid(row=1, column=0, columnspan=2,
+                                                                                  sticky="w", pady=(0, 10))
+        vars_ = {}
+        for r, key in enumerate(COMPANY_KEYS, start=2):
+            ttk.Label(frame, text=self.t(key)).grid(row=r, column=0, sticky="w", pady=4, padx=(0, 12))
+            vars_[key] = tk.StringVar(value=self.db.get_setting(key, ""))
+            ttk.Entry(frame, textvariable=vars_[key], width=40).grid(row=r, column=1, pady=4)
+
+        def save():
+            for key, var in vars_.items():
+                self.db.set_setting(key, var.get().strip())
+            win.destroy()
+            self.build()
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=len(COMPANY_KEYS) + 2, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text=self.t("cancel"), command=win.destroy).pack(side="right", padx=(6, 0))
+        ttk.Button(buttons, text=theme.button_text("save", self.t("save")), command=save,
+                   style="Accent.TButton").pack(side="right")
+        win.grab_set()
+        return win
 
     # ---------- Employés ----------
     def build_employees(self, tab):
@@ -463,7 +535,7 @@ class App(tk.Tk):
             ("period", "period", (self.t("month"), self.t("week"))),
             ("date", "date_in_period", 12),
         ])
-        period_lbl = ttk.Label(tab, text="", font=("TkDefaultFont", 10, "bold"))
+        period_lbl = ttk.Label(tab, text="", style="Period.TLabel")
         period_lbl.pack(anchor="w", padx=12)
         tree = make_tree(tab, [
             ("name", self.t("employee"), 160), ("gross", self.t("gross"), 120),
@@ -471,7 +543,7 @@ class App(tk.Tk):
             ("absded", self.t("abs_ded"), 130), ("achats", self.t("purchases"), 120),
             ("net", self.t("net_pay"), 160),
         ])
-        total_lbl = ttk.Label(tab, text="", font=("TkDefaultFont", 11, "bold"))
+        total_lbl = ttk.Label(tab, text="", style="Total.TLabel")
         total_lbl.pack(anchor="e", padx=12, pady=6)
         results = {}
 
@@ -525,7 +597,8 @@ class App(tk.Tk):
             folder.mkdir(exist_ok=True)
             for emp_id in selected_ids():
                 s, e, slip, emp = results[emp_id]
-                html = payslip_html(self.t, emp["name"], self.pay_label(emp["pay_type"]), s, e, slip)
+                html = payslip_html(self.t, emp["name"], self.pay_label(emp["pay_type"]), s, e, slip,
+                                    company=self.company())
                 path = folder / f"{self.t('payslip')}_{emp['name']}_{s}.html".replace(" ", "_")
                 path.write_text(html, encoding="utf-8")
                 webbrowser.open(path.as_uri())
@@ -547,7 +620,7 @@ class App(tk.Tk):
             ("absded", self.t("abs_short"), 105), ("achats", self.t("purchases"), 105),
             ("net", self.t("net"), 115), ("paid", self.t("paid_on"), 100),
         ])
-        total_lbl = ttk.Label(tab, text="", font=("TkDefaultFont", 11, "bold"))
+        total_lbl = ttk.Label(tab, text="", style="Total.TLabel")
         total_lbl.pack(anchor="e", padx=12, pady=6)
 
         def refresh():
@@ -576,7 +649,7 @@ class App(tk.Tk):
             ("date", self.t("date"), 120), ("amount", self.t("amount"), 150),
             ("desc", self.t("description"), 300), ("supplier", self.t("supplier"), 200),
         ])
-        total_lbl = ttk.Label(tab, text="", font=("TkDefaultFont", 11, "bold"))
+        total_lbl = ttk.Label(tab, text="", style="Total.TLabel")
         total_lbl.pack(anchor="e", padx=12, pady=6)
 
         def refresh():

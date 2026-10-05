@@ -85,6 +85,26 @@ class ExportTest(unittest.TestCase):
         self.assertIn("Ali", html)
         self.assertIn(calc.fmt_da(27500), html)
         self.assertIn("From 2026-09-01 to 2026-09-30", html)
+        self.assertNotIn("class='company'", html)
+
+    def test_payslip_company_header(self):
+        start, end = calc.month_period(date(2026, 9, 1))
+        slip = calc.compute_payslip("monthly", 30000, 0, 0, start, end)
+        company = {"company_name": "Boutique <Teboun>", "company_address": "Alger", "company_phone": "",
+                   "company_nif": "123456"}
+        html = payslip_html(lambda k: {"from_to": "{} {}"}.get(k, k), "Ali", "Monthly", "a", "b", slip, company)
+        self.assertIn("Boutique &lt;Teboun&gt;", html)
+        self.assertIn("Alger", html)
+        self.assertIn("NIF : 123456", html)
+
+
+class DatePickerTest(unittest.TestCase):
+    def test_month_grid_starts_saturday(self):
+        from salary_app.datepicker import month_grid
+        weeks = month_grid(2026, 10, calc.WEEK_START)  # 1er octobre 2026 = jeudi
+        self.assertEqual(weeks[0], [0, 0, 0, 0, 0, 1, 2])  # Sa Di Lu Ma Me Je Ve
+        self.assertEqual(max(max(w) for w in weeks), 31)
+        self.assertTrue(all(len(w) == 7 for w in weeks))
 
 
 if __name__ == "__main__":
