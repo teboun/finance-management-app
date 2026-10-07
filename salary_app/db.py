@@ -1,6 +1,7 @@
 """Base de données SQLite."""
 import os
 import sqlite3
+from pathlib import Path
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "salaires.db")
 
@@ -81,9 +82,20 @@ class DB:
         dest.close()
 
     def restore_from(self, path):
-        src = sqlite3.connect(path)
-        src.backup(self.conn)
-        src.close()
+        """Remplace les données par la sauvegarde; refuse un fichier qui n'en est pas une."""
+        try:
+            src = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True)
+        except sqlite3.Error:
+            raise ValueError("invalid_backup")
+        try:
+            ok = src.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='employees'").fetchone()
+            if not ok:
+                raise ValueError("invalid_backup")
+            src.backup(self.conn)
+        except sqlite3.DatabaseError:
+            raise ValueError("invalid_backup")
+        finally:
+            src.close()
         self._migrate()
 
     def _exec(self, sql, params=()):
@@ -130,6 +142,10 @@ class DB:
         return self._all("SELECT a.*, e.name FROM absences a JOIN employees e ON e.id=a.employee_id "
                          "ORDER BY date DESC")
 
+    def update_absence(self, row_id, emp_id, day, days, note=""):
+        self._exec("UPDATE absences SET employee_id=?, date=?, days=?, note=? WHERE id=?",
+                   (emp_id, day, days, note, row_id))
+
     def absence_days(self, emp_id, start, end):
         row = self.conn.execute("SELECT COALESCE(SUM(days),0) FROM absences WHERE employee_id=? "
                                 "AND date BETWEEN ? AND ?", (emp_id, start, end)).fetchone()
@@ -146,6 +162,10 @@ class DB:
             return self._all(base + "WHERE employee_id=? ORDER BY date DESC", (emp_id,))
         return self._all(base + "ORDER BY date DESC")
 
+    def update_employee_purchase(self, row_id, emp_id, day, amount, desc=""):
+        self._exec("UPDATE employee_purchases SET employee_id=?, date=?, amount=?, description=? WHERE id=?",
+                   (emp_id, day, amount, desc, row_id))
+
     def purchases_total(self, emp_id, start, end):
         row = self.conn.execute("SELECT COALESCE(SUM(amount),0) FROM employee_purchases WHERE employee_id=? "
                                 "AND date BETWEEN ? AND ?", (emp_id, start, end)).fetchone()
@@ -155,6 +175,10 @@ class DB:
     def add_business_purchase(self, day, amount, desc="", supplier=""):
         self._exec("INSERT INTO business_purchases (date, amount, description, supplier) VALUES (?,?,?,?)",
                    (day, amount, desc, supplier))
+
+    def update_business_purchase(self, row_id, day, amount, desc="", supplier=""):
+        self._exec("UPDATE business_purchases SET date=?, amount=?, description=?, supplier=? WHERE id=?",
+                   (day, amount, desc, supplier, row_id))
 
     def business_purchases(self, month=None):
         if month:
@@ -173,6 +197,16 @@ class DB:
             return self._all(base + "WHERE employee_id=? ORDER BY date DESC", (emp_id,))
         return self._all(base + "ORDER BY date DESC")
 
+    def update_bonus(self, row_id, emp_id, day, kind, amount, hours=0, note=""):
+        self._exec("UPDATE bonuses SET employee_id=?, date=?, kind=?, hours=?, amount=?, note=? WHERE id=?",
+                   (emp_id, day, kind, hours, amount, note, row_id))
+
+    def overtime_hours(self, emp_id, start, end, exclude_id=None):
+        """Heures supplémentaires déjà saisies dans la période (hors ligne exclude_id)."""
+        row = self.conn.execute("SELECT COALESCE(SUM(hours),0) FROM bonuses WHERE employee_id=? AND kind='overtime' "
+                                "AND date BETWEEN ? AND ? AND id IS NOT ?", (emp_id, start, end, exclude_id)).fetchone()
+        return row[0]
+
     def bonuses_total(self, emp_id, start, end):
         row = self.conn.execute("SELECT COALESCE(SUM(amount),0) FROM bonuses WHERE employee_id=? "
                                 "AND date BETWEEN ? AND ?", (emp_id, start, end)).fetchone()
@@ -185,6 +219,17 @@ class DB:
                    (emp_id, start, end, slip["gross"], slip.get("bonuses", 0), slip["absence_deduction"],
                     slip["purchases_deduction"], slip["net"], paid_on))
 
+    def paid_ids(self, emp_id, start, end):
+        """Paiements déjà enregistrés pour cet employé et cette période."""
+        return [r[0] for r in self.conn.execute(
+            "SELECT id FROM payments WHERE employee_id=? AND period_start=? AND period_end=?", (emp_id, start, end))]
+
+    def save_payment(self, emp_id, start, end, slip, paid_on):
+        """Enregistre le paiement en remplaçant un éventuel paiement de la même période."""
+        for row_id in self.paid_ids(emp_id, start, end):
+            self.conn.execute("DELETE FROM payments WHERE id=?", (row_id,))
+        self.add_payment(emp_id, start, end, slip, paid_on)
+
     def payments(self, emp_id=None, month=None):
         sql = "SELECT p.*, e.name FROM payments p JOIN employees e ON e.id=p.employee_id WHERE 1=1"
         params = []
@@ -196,8 +241,31 @@ class DB:
             params.append(month)
         return self._all(sql + " ORDER BY period_start DESC", params)
 
-    # Suppression générique
+    # Totaux du mois (tableau de bord)
+    MONTH_SUMS = {
+        "payments": ("net", "period_start"),
+        "employee_purchases": ("amount", "date"),
+        "business_purchases": ("amount", "date"),
+        "bonuses": ("amount", "date"),
+        "absences": ("days", "date"),
+    }
+
+    def month_sum(self, table, month):
+        """Somme du mois (AAAA-MM) pour une table connue."""
+        col, date_col = self.MONTH_SUMS[table]
+        row = self.conn.execute(f"SELECT COALESCE(SUM({col}),0) FROM {table} WHERE substr({date_col},1,7)=?",
+                                (month,)).fetchone()
+        return row[0]
+
+    # Lecture / suppression génériques
+    TABLES = ("absences", "employee_purchases", "business_purchases", "payments", "bonuses")
+
+    def get(self, table, row_id):
+        if table not in self.TABLES:
+            raise ValueError(table)
+        return self.conn.execute(f"SELECT * FROM {table} WHERE id=?", (row_id,)).fetchone()
+
     def delete(self, table, row_id):
-        if table not in ("absences", "employee_purchases", "business_purchases", "payments", "bonuses"):
+        if table not in self.TABLES:
             raise ValueError(table)
         self._exec(f"DELETE FROM {table} WHERE id=?", (row_id,))

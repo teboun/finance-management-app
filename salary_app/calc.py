@@ -10,6 +10,7 @@ WEEK_START = 5           # début de semaine (5=samedi)
 HOURS_PER_WEEK = 40      # durée légale (loi 90-11)
 HOURS_PER_DAY = 8
 OVERTIME_RATE = 1.5      # heures sup majorées d'au moins 50 %
+MAX_OVERTIME_PER_WEEK = HOURS_PER_WEEK * 0.2  # 20 % de la durée légale = 8 h
 
 PAY_TYPES = ("monthly", "weekly", "daily")
 
@@ -95,7 +96,14 @@ def compute_payslip(pay_type, base, absence_days, purchases_total, start, end, b
     }
 
 
+def fmt_num(value):
+    """2.0 -> '2', 1.5 -> '1,5' (jours, heures)."""
+    value = round(float(value or 0), 2)
+    return str(int(value)) if value == int(value) else f"{value:g}".replace(".", ",")
+
+
 def fmt_da(amount):
     """12345.5 -> '12 345,50 DA'"""
+    amount = round(amount, 2) + 0.0  # évite "-0,00"
     s = f"{amount:,.2f}".replace(",", " ").replace(".", ",")
     return f"{s} DA"

@@ -44,6 +44,7 @@ STYLES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 </styleSheet>"""
 
 _INVALID_XML = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+_INVALID_SHEET = re.compile(r"[\[\]:*?/\\]")  # caractères interdits par Excel dans un nom de feuille
 
 
 def _col(i):
@@ -76,7 +77,7 @@ def write_xlsx(path, headers, rows, sheet_name="Feuil1"):
     sheet = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
              '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
              f'<cols>{cols}</cols><sheetData>{"".join(lines)}</sheetData></worksheet>')
-    name = escape(_INVALID_XML.sub("", sheet_name))[:31] or "Sheet1"
+    name = escape(_INVALID_SHEET.sub(" ", _INVALID_XML.sub("", sheet_name)).strip()[:31]) or "Sheet1"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", CONTENT_TYPES)
         z.writestr("_rels/.rels", ROOT_RELS)

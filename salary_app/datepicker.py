@@ -11,6 +11,10 @@ MONTHS = {
     "fr": ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre",
            "Octobre", "Novembre", "Décembre"],
 }
+MONTHS_SHORT = {
+    "en": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+    "fr": ["Janv.", "Févr.", "Mars", "Avr.", "Mai", "Juin", "Juil.", "Août", "Sept.", "Oct.", "Nov.", "Déc."],
+}
 DAYS = {  # 0 = lundi
     "en": ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
     "fr": ["Lu", "Ma", "Me", "Je", "Ve", "Sa", "Di"],
