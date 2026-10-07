@@ -36,14 +36,31 @@ class AppParsersTest(unittest.TestCase):
         from salary_app.app import parse_days, parse_month, parse_positive, shift_month
         self.assertEqual(parse_positive("1 500,5"), 1500.5)
         for bad, fn in (("0", parse_positive), ("-3", parse_positive), ("abc", parse_positive),
-                        ("0", parse_days), ("32", parse_days), ("2026-13", parse_month), ("09-2026", parse_month)):
+                        ("0", parse_days), ("32", parse_days), ("2026-13", parse_month), ("13/2026", parse_month),
+                        ("nan", parse_positive), ("inf", parse_positive), ("1.2.3", parse_positive)):
             with self.assertRaises(ValueError, msg=bad):
                 fn(bad)
         self.assertEqual(parse_days("0,5"), 0.5)
         self.assertEqual(parse_month(" 2026-09 "), "2026-09")
         self.assertIsNone(parse_month(""))
+        self.assertEqual(parse_month("9/2026"), "2026-09")
         self.assertEqual(shift_month(date(2026, 1, 1), -1), date(2025, 12, 1))
         self.assertEqual(shift_month(date(2026, 12, 1), 1), date(2027, 1, 1))
+
+    def test_amount_thousand_separators(self):
+        from salary_app.app import parse_positive
+        for text, value in (("30.000", 30000), ("30,000", 30000), ("1.500.000", 1500000), ("30 000", 30000),
+                            ("30.000,50", 30000.5), ("30,000.50", 30000.5), ("1500,50", 1500.5), ("1,5", 1.5),
+                            ("0,5", 0.5), ("1.25", 1.25)):
+            self.assertEqual(parse_positive(text), value, text)
+
+    def test_date_formats(self):
+        from salary_app.app import parse_date
+        for text in ("2026-09-15", "15/09/2026", "15-09-2026", "15.09.2026"):
+            self.assertEqual(parse_date(text), date(2026, 9, 15), text)
+        for bad in ("2026-02-30", "31/02/2026", "15/09/26", "20260915", ""):
+            with self.assertRaises(ValueError, msg=bad):
+                parse_date(bad)
 
 
 class DBv3Test(unittest.TestCase):

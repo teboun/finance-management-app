@@ -38,6 +38,7 @@ class DatePicker(tk.Toplevel):
             self.selected = date.today()
         self.year, self.month = self.selected.year, self.selected.month
         self.overrideredirect(True)
+        self.attributes("-topmost", True)  # Mac/Windows: toujours au-dessus de la fenêtre
         self.configure(background=theme.PRIMARY, padx=1, pady=1)
         self.body = tk.Frame(self, background=theme.WHITE, padx=6, pady=6)
         self.body.pack()
@@ -48,6 +49,7 @@ class DatePicker(tk.Toplevel):
         self.update_idletasks()
         try:  # les clics hors du calendrier lui sont envoyés -> fermeture
             self.grab_set()
+            self.lift()
             self.focus_force()
         except tk.TclError:
             pass

@@ -35,11 +35,18 @@ ACCENT_KEYS = {"add", "calc", "save_payment", "save"}
 DANGER_KEYS = {"delete"}
 
 FONT = ("TkDefaultFont", 10)
+SCALE = 1.0  # agrandissement de l'écran (Windows 125 %, 150 %...), calculé dans apply()
+
+
+def px(n):
+    """Taille en pixels adaptée à l'agrandissement de l'écran."""
+    return int(round(n * SCALE))
 
 
 def apply(root):
     """Applique le thème à la fenêtre principale."""
-    global FONT
+    global FONT, SCALE
+    SCALE = max(1.0, root.winfo_fpixels("1i") / 96.0)
     base = tkfont.nametofont("TkDefaultFont")
     if sys.platform == "win32":
         family, size = "Segoe UI", 10
@@ -90,7 +97,8 @@ def apply(root):
     s.layout("Pages.TNotebook.Tab", [])
     s.configure("Pages.TNotebook", background=BG, borderwidth=0, tabmargins=0)
 
-    s.configure("Treeview", rowheight=int(size * 2.7), background=WHITE, fieldbackground=WHITE,
+    line = tkfont.nametofont("TkDefaultFont").metrics("linespace")  # hauteur réelle du texte
+    s.configure("Treeview", rowheight=int(line * 1.75), background=WHITE, fieldbackground=WHITE,
                 bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER)
     s.map("Treeview", background=[("selected", SELECT)], foreground=[("selected", TEXT)])
     s.configure("Treeview.Heading", background=PRIMARY, foreground=WHITE, font=(family, size, "bold"),

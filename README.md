@@ -1,7 +1,7 @@
 # finance-management-app
 Application web de gestion financière avec FastAPI, React et PostgreSQL.
 
-## Calcul des salaires v3.0 (application bureau Windows / Mac)
+## Calcul des salaires v3.0.1 (application bureau Windows / Mac)
 
 Programme Python (Tkinter + SQLite, aucune dépendance externe) pour :
 - **tableau de bord** : employés actifs, salaires à payer et payés, primes, achats du mois, graphique des 6 derniers mois ;
@@ -19,6 +19,9 @@ Programme Python (Tkinter + SQLite, aucune dépendance externe) pour :
 - sauvegarde / restauration des données (un fichier invalide est refusé sans toucher aux données) ;
 - langue English / Français (menu à gauche, mémorisée) ; calendrier pour choisir les dates (bouton ▦) ;
 - **Paramètres** : nom, adresse, téléphone et NIF de l'entreprise.
+
+Saisie : les montants peuvent s'écrire `30000`, `30 000`, `30.000` ou `30,000` (= trente mille) et `1500,50` ;
+les dates `2026-09-15` ou `15/09/2026` ; les mois `2026-09` ou `09/2026`.
 
 ### Installation
 

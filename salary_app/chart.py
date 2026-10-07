@@ -28,16 +28,15 @@ def fmt_short(value):
 class BarChart(tk.Canvas):
     """Barres groupées: une couleur par série, légende, grille discrète, info-bulle au survol."""
 
-    LEFT, RIGHT, TOP, BOTTOM = 64, 16, 40, 30
-
     def __init__(self, parent, height=270):
-        super().__init__(parent, height=height, background=theme.CARD, highlightthickness=0)
-        self.labels, self.series = [], []
+        super().__init__(parent, height=theme.px(height), background=theme.CARD, highlightthickness=0)
+        self.LEFT, self.RIGHT, self.TOP, self.BOTTOM = theme.px(64), theme.px(16), theme.px(40), theme.px(30)
+        self.labels, self.series, self.empty_text = [], [], ""
         self.bind("<Configure>", lambda e: self.draw())
 
-    def set_data(self, labels, series):
-        """labels = noms des groupes; series = [(nom, couleur, [valeurs])]."""
-        self.labels, self.series = labels, series
+    def set_data(self, labels, series, empty_text=""):
+        """labels = noms des groupes; series = [(nom, couleur, [valeurs])]; empty_text si tout est à 0."""
+        self.labels, self.series, self.empty_text = labels, series, empty_text
         self.draw()
 
     def draw(self):
@@ -48,7 +47,16 @@ class BarChart(tk.Canvas):
         font = theme.FONT
         small = (font[0], max(font[1] - 1, 8))
         left, right, top, bottom = self.LEFT, w - self.RIGHT, self.TOP, h - self.BOTTOM
-        ymax = nice_ceiling(max([max(0, v) for _, _, vals in self.series for v in vals] or [0]))
+        top_value = max([max(0, v) for _, _, vals in self.series for v in vals] or [0])
+        if top_value <= 0:  # pas encore de données: pas d'axe vide en 0,25 / 0,5...
+            self.create_line(left, bottom, right, bottom, fill=theme.BORDER)
+            self.create_text((left + right) / 2, (top + bottom) / 2, text=self.empty_text, fill=theme.MUTED,
+                             font=font)
+            for i, label in enumerate(self.labels):
+                gx = left + (right - left) / len(self.labels) * (i + 0.5)
+                self.create_text(gx, bottom + theme.px(14), text=label, fill=theme.MUTED, font=small)
+            return
+        ymax = nice_ceiling(top_value)
 
         def y(v):
             return bottom - (max(0, v) / ymax) * (bottom - top)
@@ -87,13 +95,14 @@ class BarChart(tk.Canvas):
 
         # libellés des mois
         for i, label in enumerate(self.labels):
-            self.create_text(left + gw * (i + 0.5), bottom + 14, text=label, fill=theme.MUTED, font=small)
+            self.create_text(left + gw * (i + 0.5), bottom + theme.px(14), text=label, fill=theme.MUTED, font=small)
 
         # légende
         lx = left
         for name, color, _ in self.series:
-            self.create_rectangle(lx, 14, lx + 10, 24, fill=color, outline="")
-            t = self.create_text(lx + 16, 19, text=name, anchor="w", fill=theme.TEXT, font=small)
+            sq, mid = theme.px(10), theme.px(19)
+            self.create_rectangle(lx, mid - sq // 2, lx + sq, mid + sq // 2, fill=color, outline="")
+            t = self.create_text(lx + sq + 6, mid, text=name, anchor="w", fill=theme.TEXT, font=small)
             lx = self.bbox(t)[2] + 18
 
     def tooltip(self, i, j, cx):

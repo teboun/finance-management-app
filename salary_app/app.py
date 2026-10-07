@@ -2,6 +2,7 @@
 
 Lancer: python -m salary_app.app
 """
+import math
 import re
 import sys
 import tempfile
@@ -55,12 +56,12 @@ TEXT = {
     "all": ("All", "Tous"),
     "error": ("Error", "Erreur"),
     "warning": ("Warning", "Attention"),
-    "err_date": ("Invalid date (YYYY-MM-DD)", "Date invalide (AAAA-MM-JJ)"),
+    "err_date": ("Invalid date (use YYYY-MM-DD or DD/MM/YYYY)", "Date invalide (AAAA-MM-JJ ou JJ/MM/AAAA)"),
     "err_amount": ("Invalid number", "Nombre invalide"),
     "err_positive": ("The amount must be greater than 0", "Le montant doit être supérieur à 0"),
     "err_days": ("Absent days must be between 0 and 31 (e.g. 1 or 0.5)",
                  "Les jours d'absence doivent être entre 0 et 31 (ex. 1 ou 0,5)"),
-    "err_month": ("Invalid month (YYYY-MM)", "Mois invalide (AAAA-MM)"),
+    "err_month": ("Invalid month (use YYYY-MM or MM/YYYY)", "Mois invalide (AAAA-MM ou MM/AAAA)"),
     "invalid_backup": ("This file is not a valid backup", "Ce fichier n'est pas une sauvegarde valide"),
     "choose_emp": ("Choose an employee", "Choisir un employé"),
     "select_one": ("Select one line in the table first", "Sélectionnez d'abord une ligne du tableau"),
@@ -162,6 +163,8 @@ TEXT = {
     "kpi_purch": ("Employee purchases", "Achats employés"),
     "kpi_business": ("Business purchases", "Achats entreprise"),
     "kpi_month_cap": ("This month", "Ce mois"),
+    "chart_empty": ("No salaries paid or business purchases in these months yet",
+                    "Aucun salaire payé ni achat entreprise sur ces mois pour l'instant"),
     "chart_title": ("Salaries paid and business purchases — last 6 months",
                     "Salaires payés et achats entreprise — 6 derniers mois"),
 }
@@ -170,17 +173,35 @@ COMPANY_KEYS = ("company_name", "company_address", "company_phone", "company_nif
 
 
 def parse_date(text):
+    """AAAA-MM-JJ, ou JJ/MM/AAAA et JJ-MM-AAAA (format courant en Algérie)."""
+    text = text.strip()
+    m = re.fullmatch(r"(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})", text)
     try:
-        return date.fromisoformat(text.strip())
+        if m:
+            return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            return date.fromisoformat(text)
     except ValueError:
-        raise ValueError("err_date")
+        pass
+    raise ValueError("err_date")
 
 
 def parse_amount(text):
-    try:
-        return float(text.replace(" ", "").replace(",", "."))
-    except ValueError:
+    """Nombre saisi: '30000', '30 000', '30.000' ou '30,000' (= trente mille), '1500,50', '30.000,50'."""
+    s = text.strip().replace(" ", "").replace("\u00a0", "").replace("\u202f", "")
+    if "," in s and "." in s:  # le dernier séparateur est la virgule décimale
+        dec = "," if s.rfind(",") > s.rfind(".") else "."
+        s = s.replace("." if dec == "," else ",", "").replace(dec, ".")
+    elif re.fullmatch(r"-?[1-9]\d{0,2}([.,]\d{3})+", s):  # séparateurs de milliers
+        s = s.replace(".", "").replace(",", "")
+    else:
+        s = s.replace(",", ".")
+    if not re.fullmatch(r"-?(\d+\.?\d*|\.\d+)", s):
         raise ValueError("err_amount")
+    value = float(s)
+    if not math.isfinite(value):
+        raise ValueError("err_amount")
+    return value
 
 
 def parse_positive(text):
@@ -202,6 +223,9 @@ def parse_month(text):
     text = text.strip()
     if not text:
         return None
+    m = re.fullmatch(r"(0?[1-9]|1[0-2])[/.-](\d{4})", text)  # aussi MM/AAAA
+    if m:
+        return f"{m.group(2)}-{int(m.group(1)):02d}"
     if not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", text):
         raise ValueError("err_month")
     return text
@@ -255,8 +279,10 @@ class App(tk.Tk):
         self.db = db
         self.lang = db.get_setting("lang", "en")
         theme.apply(self)
-        self.geometry("1280x780")
-        self.minsize(1120, 680)
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        w, h = min(theme.px(1280), sw - 40), min(theme.px(780), sh - 80)
+        self.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 3)}")
+        self.minsize(min(theme.px(1120), sw - 40), min(theme.px(640), sh - 80))
         self.root_frame = None
         self.current_page = 0
         self.build()
@@ -303,17 +329,17 @@ class App(tk.Tk):
         self.show_page(self.current_page)
 
     def build_sidebar(self):
-        side = tk.Frame(self.root_frame, background=theme.SIDEBAR, width=236)
+        side = tk.Frame(self.root_frame, background=theme.SIDEBAR, width=theme.px(236))
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
         family, size = theme.FONT
         company = self.db.get_setting("company_name", "")
         tk.Label(side, text=company or self.t("title"), background=theme.SIDEBAR, foreground=theme.WHITE,
-                 font=(family, size + 4, "bold"), wraplength=200, justify="left", anchor="w"
+                 font=(family, size + 4, "bold"), wraplength=theme.px(200), justify="left", anchor="w"
                  ).pack(fill="x", padx=20, pady=(22, 0))
         tk.Label(side, text=f"{self.t('title')} v{__version__}" if company else self.t("subtitle"),
                  background=theme.SIDEBAR, foreground=theme.SIDEBAR_TEXT, font=(family, size - 1),
-                 wraplength=200, justify="left", anchor="w").pack(fill="x", padx=20, pady=(2, 18))
+                 wraplength=theme.px(200), justify="left", anchor="w").pack(fill="x", padx=20, pady=(2, 18))
 
         def item(parent, key, command, small=False):
             lbl = tk.Label(parent, text=f"{theme.ICONS.get(key, '')}   {self.t(key)}", anchor="w",
@@ -666,7 +692,7 @@ class App(tk.Tk):
             chart.set_data(labels, [
                 (self.t("kpi_paid"), theme.SERIES[0], [self.db.month_sum("payments", k) for k in keys]),
                 (self.t("kpi_business"), theme.SERIES[1], [self.db.month_sum("business_purchases", k) for k in keys]),
-            ])
+            ], empty_text=self.t("chart_empty"))
 
         def move(step):
             state["month"] = shift_month(state["month"], step)
@@ -1016,7 +1042,16 @@ def main():
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except (AttributeError, OSError):
             pass
-    App(DB()).mainloop()
+    try:
+        app = App(DB())
+    except Exception as err:  # lancé sans console (Lancer.bat): montrer l'erreur au lieu de rien
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("Salaires", f"{type(err).__name__}: {err}")
+        raise
+    app.report_callback_exception = lambda exc, val, tb: messagebox.showerror(
+        "Salaires", f"{exc.__name__}: {val}")
+    app.mainloop()
 
 
 if __name__ == "__main__":
