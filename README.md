@@ -58,5 +58,6 @@ Pour reprendre les données de l'ancienne version : dans le nouveau programme, *
 - Paramètres (jours par mois, jour de repos, début de semaine, heures, majoration) : `salary_app/calc.py`.
 - Tests : `python -m unittest discover tests` ; vérification de l'interface : `python tests/ui_check.py`.
 - Construire le programme : `pip install pyinstaller pillow` puis `python build_app.py` (résultat dans `dist/`).
-  Sur GitHub, la construction est automatique : pousser une étiquette `vX.Y.Z` publie une Release avec
-  `Salaires-Windows.exe` et `Salaires-Mac.zip` (après tests sur Windows et Mac).
+- Publier une nouvelle version sur GitHub : onglet **Actions → Build app → Run workflow**, indiquer la version
+  (ex. `v3.2.0`). Le programme est testé sur Windows et Mac, puis une Release est publiée avec
+  `Salaires-Windows.exe` et `Salaires-Mac.zip`. (Pousser une étiquette `vX.Y.Z` fait la même chose.)

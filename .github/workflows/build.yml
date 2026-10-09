@@ -1,10 +1,17 @@
 # Construit Salaires.exe (Windows) et Salaires.app (Mac), les vérifie sur de vrais Windows/Mac,
-# et publie une « Release » GitHub quand on pousse une étiquette vX.Y.Z.
+# et publie une « Release » GitHub:
+#   - onglet Actions → « Build app » → « Run workflow » avec une version (ex. v3.2.0), ou
+#   - en poussant une étiquette vX.Y.Z.
 name: Build app
 
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version à publier (ex. v3.2.0). Laisser vide pour seulement construire et tester."
+        required: false
+        default: ""
   push:
     tags: ["v*"]
 
@@ -69,7 +76,9 @@ jobs:
           path: out/*
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && startsWith(inputs.version, 'v'))
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -80,9 +89,12 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.version || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          name: Salaires ${{ inputs.version || github.ref_name }}
           files: out/*
           body: |
-            ## Salaires ${{ github.ref_name }}
+            ## Salaires ${{ inputs.version || github.ref_name }}
 
             **Windows**: download `Salaires-Windows.exe` and double-click it (no installation, no Python needed).
             The first time, Windows may show "Windows protected your PC": click **More info → Run anyway**.
