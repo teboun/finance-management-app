@@ -3,10 +3,13 @@
 Lancer: python -m salary_app.app
 """
 import math
+import os
 import re
+import subprocess
 import sys
 import tempfile
 import tkinter as tk
+import traceback
 import webbrowser
 from datetime import date
 from pathlib import Path
@@ -15,7 +18,7 @@ from tkinter import filedialog, messagebox, ttk
 from . import __version__, calc, theme
 from .chart import BarChart
 from .datepicker import MONTHS_SHORT, DatePicker
-from .db import DB
+from .db import DB, DB_NAME, default_db_path
 from .report import payslip_section, payslips_document
 from .xlsx import write_xlsx
 
@@ -151,6 +154,10 @@ TEXT = {
     "company_phone": ("Phone", "Téléphone"),
     "company_nif": ("Tax ID (NIF)", "NIF"),
     "company_hint": ("Shown on payslips.", "Affiché sur les fiches de paie."),
+    "data_file": ("Data file", "Fichier de données"),
+    "data_hint": ("All your data is in this file. Use Backup regularly (e.g. to a USB key).",
+                  "Toutes vos données sont dans ce fichier. Utilisez Sauvegarder régulièrement (ex. clé USB)."),
+    "open_folder": ("Open folder", "Ouvrir le dossier"),
     "save": ("Save", "Enregistrer"),
     "cancel": ("Cancel", "Annuler"),
     "kpi_emp": ("Active employees", "Employés actifs"),
@@ -269,6 +276,15 @@ class Cancelled(Exception):
     """L'utilisateur a annulé une action (ce n'est pas une erreur)."""
 
 
+def open_folder(path):
+    """Ouvre le dossier contenant `path` dans l'explorateur de fichiers."""
+    folder = os.path.dirname(os.path.abspath(path))
+    if sys.platform == "win32":
+        os.startfile(folder)
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", folder])
+
+
 def safe_filename(text):
     return re.sub(r"[^\w-]+", "_", text).strip("_") or "fiche"
 
@@ -279,6 +295,13 @@ class App(tk.Tk):
         self.db = db
         self.lang = db.get_setting("lang", "en")
         theme.apply(self)
+        icon = Path(__file__).resolve().parent / "assets" / "icon.png"
+        if icon.exists():
+            try:
+                self._icon = tk.PhotoImage(file=str(icon))
+                self.iconphoto(True, self._icon)
+            except tk.TclError:
+                pass
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         w, h = min(theme.px(1280), sw - 40), min(theme.px(780), sh - 80)
         self.geometry(f"{w}x{h}+{max(0, (sw - w) // 2)}+{max(0, (sh - h) // 3)}")
@@ -615,8 +638,22 @@ class App(tk.Tk):
             win.destroy()
             self.build()
 
+        r = len(COMPANY_KEYS) + 2
+        ttk.Separator(frame).grid(row=r, column=0, columnspan=2, sticky="ew", pady=14)
+        ttk.Label(frame, text=self.t("data_file"), style="Period.TLabel").grid(row=r + 1, column=0, columnspan=2,
+                                                                                sticky="w")
+        ttk.Label(frame, text=self.t("data_hint"), style="Muted.TLabel", wraplength=theme.px(460)).grid(
+            row=r + 2, column=0, columnspan=2, sticky="w")
+        path_var = tk.StringVar(value=os.path.abspath(self.db.path) if self.db.path != ":memory:" else self.db.path)
+        win.path_var = path_var  # garder une référence, sinon le champ s'affiche vide
+        path_entry = ttk.Entry(frame, textvariable=path_var, state="readonly", width=40)
+        path_entry.grid(row=r + 3, column=1, pady=6, sticky="ew")
+        path_entry.bind("<Configure>", lambda e: path_entry.xview_moveto(1))  # montrer la fin du chemin
+        ttk.Button(frame, text=self.t("open_folder"), command=self.safe(lambda: open_folder(self.db.path))).grid(
+            row=r + 3, column=0, sticky="w", pady=6)
+
         buttons = ttk.Frame(frame)
-        buttons.grid(row=len(COMPANY_KEYS) + 2, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        buttons.grid(row=r + 4, column=0, columnspan=2, sticky="e", pady=(14, 0))
         ttk.Button(buttons, text=self.t("cancel"), command=win.destroy).pack(side="right", padx=(6, 0))
         ttk.Button(buttons, text=theme.button_text("save", self.t("save")), command=save,
                    style="Accent.TButton").pack(side="right")
@@ -1035,13 +1072,57 @@ class App(tk.Tk):
         self.show_hook(refresh)
 
 
-def main():
+def selftest(out_path):
+    """Vérification rapide que le programme s'ouvre et calcule juste (sert à tester Salaires.exe).
+    Écrit le résultat dans out_path; retourne 0 si tout va bien."""
+    lines, problems = [], []
+    messagebox.showerror = lambda title, msg, **k: problems.append(msg)
+    messagebox.showinfo = lambda title, msg, **k: lines.append(f"info: {msg}")
+    messagebox.askyesno = lambda title, msg, **k: True
+    folder = tempfile.mkdtemp(prefix="salaires_selftest_")
+    try:
+        db = DB(os.path.join(folder, DB_NAME))
+        emp = db.add_employee("Test", "monthly", 30000)
+        db.add_absence(emp, "2026-09-10", 1)
+        db.add_bonus(emp, "2026-09-12", "overtime", calc.overtime_amount("monthly", 30000, 2), hours=2)
+        app = App(db)
+        for i in range(len(app.PAGES)):
+            app.show_page(i)
+            app.update()
+        app.switch_lang()
+        app.update()
+        net = app.compute_slips(date(2026, 9, 1), date(2026, 9, 30))[0][1]["net"]
+        lines.append(f"net Sep 2026: {net}")
+        if net != 29519.23:
+            problems.append(f"wrong net {net} (expected 29519.23)")
+        write_xlsx(os.path.join(folder, "check.xlsx"), ["a", "b"], [["x", 1.5]])
+        slip = app.compute_slips(date(2026, 9, 1), date(2026, 9, 30))[0][1]
+        html = payslips_document(app.t, [payslip_section(app.t, "Test", "x", "a", "b", slip)], "t")
+        if "29 519,23 DA" not in html:
+            problems.append("payslip amount missing")
+        lines.append(f"icon loaded: {bool(getattr(app, '_icon', None))}")
+        app.destroy()
+        lines.append(f"python {sys.version.split()[0]}, tk {tk.TkVersion}, frozen={getattr(sys, 'frozen', False)}")
+        lines.append(f"data file location: {default_db_path()}")
+    except Exception:
+        problems.append(traceback.format_exc())
+    lines.append("SELFTEST " + ("OK" if not problems else "FAILED"))
+    lines += [f"problem: {p}" for p in problems]
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return 1 if problems else 0
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
     if sys.platform == "win32":
         try:  # texte net sur les écrans haute résolution
             import ctypes
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except (AttributeError, OSError):
             pass
+    if argv[:1] == ["--selftest"]:
+        sys.exit(selftest(os.path.abspath(argv[1] if len(argv) > 1 else "selftest.txt")))
     try:
         app = App(DB())
     except Exception as err:  # lancé sans console (Lancer.bat): montrer l'erreur au lieu de rien

@@ -1,0 +1,98 @@
+# Construit Salaires.exe (Windows) et Salaires.app (Mac), les vérifie sur de vrais Windows/Mac,
+# et publie une « Release » GitHub quand on pousse une étiquette vX.Y.Z.
+name: Build app
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Unit tests
+        run: python -m unittest discover tests
+
+      - name: Interface check (clicks through every page)
+        timeout-minutes: 10
+        run: python tests/ui_check.py ui_out
+
+      - name: Build
+        run: |
+          pip install pyinstaller pillow
+          python build_app.py
+
+      - name: Self-test of Salaires.exe
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\Salaires.exe -ArgumentList "--selftest", "$PWD\selftest.txt" -Wait -PassThru
+          Get-Content selftest.txt
+          if ($p.ExitCode -ne 0) { exit 1 }
+
+      - name: Self-test of Salaires.app
+        if: runner.os == 'macOS'
+        timeout-minutes: 5
+        run: |
+          dist/Salaires.app/Contents/MacOS/Salaires --selftest "$PWD/selftest.txt"
+          cat selftest.txt
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir out
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp dist/Salaires.exe out/Salaires-Windows.exe
+          else
+            (cd dist && ditto -c -k --keepParent Salaires.app ../out/Salaires-Mac.zip)
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Salaires-${{ runner.os }}
+          path: out/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          body: |
+            ## Salaires ${{ github.ref_name }}
+
+            **Windows**: download `Salaires-Windows.exe` and double-click it (no installation, no Python needed).
+            The first time, Windows may show "Windows protected your PC": click **More info → Run anyway**.
+
+            **Mac** (Apple Silicon M1/M2/M3/M4): download `Salaires-Mac.zip`, unzip, then **right-click Salaires → Open** the first time.
+
+            Your data is saved in **Documents/Salaires/salaires.db** (shown in Settings). Use **Backup** regularly.
+
+            ---
+            **Windows** : téléchargez `Salaires-Windows.exe` et double-cliquez (rien à installer).
+            La première fois, si Windows affiche « Windows a protégé votre ordinateur » : **Informations complémentaires → Exécuter quand même**.
+            **Mac** : décompressez `Salaires-Mac.zip`, puis **clic droit sur Salaires → Ouvrir** la première fois.
+            Vos données sont dans **Documents/Salaires/salaires.db** (affiché dans Paramètres).

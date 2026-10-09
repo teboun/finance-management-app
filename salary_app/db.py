@@ -1,9 +1,43 @@
 """Base de données SQLite."""
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "salaires.db")
+DB_NAME = "salaires.db"
+
+
+def documents_dir():
+    """Dossier « Documents » de l'utilisateur (le vrai, même s'il est déplacé dans OneDrive)."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            buf = ctypes.create_unicode_buffer(260)
+            if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf) == 0 and buf.value:  # 5 = Mes documents
+                return Path(buf.value)
+        except (AttributeError, OSError):
+            pass
+    docs = Path.home() / "Documents"
+    return docs if docs.is_dir() else Path.home()
+
+
+def default_db_path():
+    """Emplacement du fichier de données.
+    - variable SALAIRES_DATA_DIR si elle est définie;
+    - programme installé (Salaires.exe / Salaires.app): salaires.db à côté du programme s'il y en a un
+      (mode portable), sinon Documents/Salaires/salaires.db (un dossier qui ne disparaît pas);
+    - lancé depuis le code source (Lancer.bat / Lancer.command): à côté du dossier salary_app."""
+    if os.environ.get("SALAIRES_DATA_DIR"):
+        return str(Path(os.environ["SALAIRES_DATA_DIR"]) / DB_NAME)
+    if getattr(sys, "frozen", False):
+        beside = Path(sys.executable).resolve().parent / DB_NAME
+        if beside.exists():
+            return str(beside)
+        return str(documents_dir() / "Salaires" / DB_NAME)
+    return str(Path(__file__).resolve().parent.parent / DB_NAME)
+
+
+DB_PATH = default_db_path()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS employees (
@@ -62,8 +96,11 @@ CREATE TABLE IF NOT EXISTS bonuses (
 
 
 class DB:
-    def __init__(self, path=DB_PATH):
-        self.conn = sqlite3.connect(path)
+    def __init__(self, path=None):
+        self.path = path or default_db_path()
+        if self.path != ":memory:":
+            os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
+        self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self._migrate()
 

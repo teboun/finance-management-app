@@ -1,7 +1,6 @@
 # finance-management-app
-Application web de gestion financière avec FastAPI, React et PostgreSQL.
 
-## Calcul des salaires v3.0.1 (application bureau Windows / Mac)
+## Salaires v3.1.0 — calcul des salaires (application Windows / Mac)
 
 Programme Python (Tkinter + SQLite, aucune dépendance externe) pour :
 - **tableau de bord** : employés actifs, salaires à payer et payés, primes, achats du mois, graphique des 6 derniers mois ;
@@ -23,26 +22,41 @@ Programme Python (Tkinter + SQLite, aucune dépendance externe) pour :
 Saisie : les montants peuvent s'écrire `30000`, `30 000`, `30.000` ou `30,000` (= trente mille) et `1500,50` ;
 les dates `2026-09-15` ou `15/09/2026` ; les mois `2026-09` ou `09/2026`.
 
-### Installation
+### Télécharger et lancer (le plus simple)
+
+Page **Releases** du dépôt GitHub (colonne de droite) → dernière version :
+
+- **Windows** : télécharger `Salaires-Windows.exe` et double-cliquer. Rien à installer, pas besoin de Python.
+  La première fois, si Windows affiche « Windows a protégé votre ordinateur » :
+  **Informations complémentaires → Exécuter quand même** (le programme n'est pas signé numériquement).
+- **Mac** (puces Apple M1 à M4) : télécharger `Salaires-Mac.zip`, décompresser, puis **clic droit sur Salaires → Ouvrir**
+  la première fois.
+
+### Données
+
+Tout est enregistré **sur votre ordinateur** (rien n'est envoyé sur Internet) :
+
+- programme téléchargé (`Salaires-Windows.exe` / `Salaires.app`) : `Documents/Salaires/salaires.db` ;
+  mode portable : si un fichier `salaires.db` est placé à côté du programme, c'est celui-là qui est utilisé ;
+- version code source (`Lancer.bat` / `Lancer.command`) : `salaires.db` dans le dossier de l'application.
+
+L'emplacement exact est affiché dans **Paramètres** (bouton « Ouvrir le dossier »).
+Utiliser le bouton **Sauvegarder** régulièrement (par exemple sur une clé USB) ; **Restaurer** recharge une sauvegarde.
+Pour reprendre les données de l'ancienne version : dans le nouveau programme, **Restaurer** et choisir l'ancien `salaires.db`.
+
+### Lancer depuis le code source (alternative)
 
 1. Installer Python 3 depuis https://www.python.org/downloads/
    - **Windows** : cocher « Add python.exe to PATH » et laisser « tcl/tk and IDLE » coché.
    - **Mac** : utiliser l'installateur de python.org (il contient Tkinter).
-2. Télécharger ce dossier (bouton *Code → Download ZIP* sur GitHub, branche `claude/funny-ptolemy-qrcr3h`) et le décompresser.
-
-### Lancer
-
-- **Windows** : double-cliquer sur `Lancer.bat`.
-- **Mac** : double-cliquer sur `Lancer.command` (la première fois : clic droit → Ouvrir).
-- Ou en ligne de commande, dans le dossier : `python -m salary_app.app` (Mac : `python3`).
-
-### Données
-
-Tout est enregistré **sur votre ordinateur**, dans le fichier `salaires.db` du dossier (rien n'est envoyé sur Internet).
-Utiliser le bouton **Sauvegarder** régulièrement (par exemple sur une clé USB) ; **Restaurer** recharge une sauvegarde.
-Pour mettre à jour l'application, garder `salaires.db` et remplacer les autres fichiers.
+2. Télécharger le code (*Code → Download ZIP*) et le décompresser.
+3. **Windows** : double-cliquer sur `Lancer.bat`. **Mac** : double-cliquer sur `Lancer.command`
+   (la première fois : clic droit → Ouvrir). Ou : `python -m salary_app.app` (Mac : `python3`).
 
 ### Paramètres et tests
 
 - Paramètres (jours par mois, jour de repos, début de semaine, heures, majoration) : `salary_app/calc.py`.
-- Tests : `python -m unittest discover tests`.
+- Tests : `python -m unittest discover tests` ; vérification de l'interface : `python tests/ui_check.py`.
+- Construire le programme : `pip install pyinstaller pillow` puis `python build_app.py` (résultat dans `dist/`).
+  Sur GitHub, la construction est automatique : pousser une étiquette `vX.Y.Z` publie une Release avec
+  `Salaires-Windows.exe` et `Salaires-Mac.zip` (après tests sur Windows et Mac).
